@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Oxford Flashcards</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>Oxford Flashcards</h1>
+        <div class="stats" id="stats">Đang tải...</div>
+      </div>
+      <div class="toolbar">
+        <button type="button" onclick="loadDataset('oxford-3000')">+ Oxford 3000</button>
+        <button type="button" onclick="loadDataset('oxford-5000')">+ Oxford 5000</button>
+        <button type="button" onclick="openModal()">Nạp / Sao lưu</button>
+      </div>
+    </header>
+
+    <nav class="views" aria-label="Chế độ học">
+      <button type="button" data-view="study" class="active">Học hôm nay</button>
+      <button type="button" data-view="learned">Đã nhớ</button>
+      <button type="button" data-view="forgotten">Từ đã quên</button>
+      <button type="button" data-view="browse">Theo chữ cái</button>
+    </nav>
+
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+    <nav class="letters" id="letters" aria-label="Lọc theo chữ cái" hidden></nav>
+    <main id="mainArea"></main>
+    <div class="controls" id="controls"></div>
+  </div>
+
+  <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-box">
+      <h2 id="modalTitle">Nạp từ vựng / sao lưu</h2>
+      <p>Chọn file .txt, .csv, .json hoặc dán danh sách từ (mỗi từ một dòng). Bản sao lưu JSON có thể nạp lại để khôi phục tiến độ.</p>
+      <label class="file-label">
+        Chọn file từ máy
+        <input type="file" id="fileInput" accept=".txt,.csv,.json" hidden />
+      </label>
+      <textarea id="bulkText" placeholder="Ví dụ:&#10;abandon&#10;ability, khả năng"></textarea>
+      <div class="row">
+        <button type="button" class="primary" id="importButton">Nạp danh sách</button>
+        <button type="button" id="exportButton">Copy backup</button>
+        <button type="button" onclick="closeModal()">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const STORAGE_KEY = 'oxford_srs_v1';
+  const DAILY_NEW_LIMIT = 15;
+  const STARTER_WORDS = [
+    { w: "abandon", pos: "v.", ipa: "/əˈbændən/", vi: "từ bỏ, ruồng bỏ", ex: "They had to abandon the car in the snow." },
+    { w: "ability", pos: "n.", ipa: "/əˈbɪləti/", vi: "khả năng, năng lực", ex: "She has the ability to explain things clearly." },
+    { w: "abroad", pos: "adv.", ipa: "/əˈbrɔːd/", vi: "ở nước ngoài", ex: "He is currently studying abroad." },
+    { w: "accurate", pos: "adj.", ipa: "/ˈækjərət/", vi: "chính xác, đúng đắn", ex: "The weather forecast was completely accurate." },
+    { w: "achieve", pos: "v.", ipa: "/əˈtʃiːv/", vi: "đạt được, giành được", ex: "You can achieve anything if you work hard." },
+    { w: "adequate", pos: "adj.", ipa: "/ˈædɪkwət/", vi: "đầy đủ, tương xứng", ex: "Make sure you get adequate sleep." },
+    { w: "afford", pos: "v.", ipa: "/əˈfɔːrd/", vi: "có đủ khả năng chi trả", ex: "I can't afford to buy a new laptop right now." },
+    { w: "approach", pos: "v./n.", ipa: "/ˈæproʊtʃ/", vi: "tiếp cận, phương pháp", ex: "We need a new approach to solve this bug." },
+    { w: "appropriate", pos: "adj.", ipa: "/əˈproʊpriət/", vi: "thích hợp, phù hợp", ex: "Choose an appropriate time to call him." },
+    { w: "available", pos: "adj.", ipa: "/əˈveɪləbl/", vi: "có sẵn, rảnh rỗi", ex: "Is this seat available?" },
+    { w: "benefit", pos: "n./v.", ipa: "/ˈbenɪfɪt/", vi: "lợi ích, hưởng lợi", ex: "Regular exercise has many health benefits." },
+    { w: "capable", pos: "adj.", ipa: "/ˈkeɪpəbl/", vi: "có khả năng, giỏi", ex: "She is capable of handling complex tasks." },
+    { w: "challenge", pos: "n./v.", ipa: "/ˈtʃælɪndʒ/", vi: "thử thách, thách thức", ex: "Learning to code is an exciting challenge." },
+    { w: "circumstance", pos: "n.", ipa: "/ˈsɜːrkəmstæns/", vi: "hoàn cảnh, tình huống", ex: "Under no circumstances should you share your password." },
+    { w: "concentrate", pos: "v.", ipa: "/ˈkɑːnsntreɪt/", vi: "tập trung", ex: "Turn off notifications so you can concentrate." },
+    { w: "consequence", pos: "n.", ipa: "/ˈkɑːnsɪkwəns/", vi: "hậu quả, kết quả", ex: "Every decision has its own consequences." },
+    { w: "consistent", pos: "adj.", ipa: "/kənˈsɪstənt/", vi: "nhất quán, kiên trì", ex: "Success comes from consistent daily practice." },
+    { w: "crucial", pos: "adj.", ipa: "/ˈkruːʃl/", vi: "cốt yếu, cực kỳ quan trọng", ex: "Practice is crucial when learning a language." },
+    { w: "determine", pos: "v.", ipa: "/dɪˈtɜːrmɪn/", vi: "xác định, quyết tâm", ex: "Your attitude determines your success." },
+    { w: "efficient", pos: "adj.", ipa: "/ɪˈfɪʃnt/", vi: "hiệu quả, năng suất", ex: "This algorithm is much more efficient." },
+    { w: "essential", pos: "adj.", ipa: "/ɪˈsenʃl/", vi: "thiết yếu, cần thiết", ex: "Water is essential for life." },
+    { w: "familiar", pos: "adj.", ipa: "/fəˈmɪliər/", vi: "quen thuộc", ex: "Her face looks very familiar to me." },
+    { w: "gradually", pos: "adv.", ipa: "/ˈɡrædʒuəli/", vi: "dần dần, từ từ", ex: "Your vocabulary will grow gradually." },
+    { w: "identify", pos: "v.", ipa: "/aɪˈdentɪfaɪ/", vi: "nhận diện, xác định", ex: "Can you identify the root cause of the error?" },
+    { w: "maintain", pos: "v.", ipa: "/meɪnˈteɪn/", vi: "duy trì, bảo trì", ex: "It is hard to maintain a good habit." }
+  ];
+
+  let state = loadState();
+  let sessionQueue = [];
+  let isRevealed = false;
+  let currentView = 'study';
+  let selectedLetter = '';
+  let listPage = 0;
+  let audioIndex = {};
+
+  function getAudioPaths(sound) {
+    const localPath = paths => {
+      const path = paths && paths[0];
+      return path ? `data/media/${path.split('/').pop()}` : '';
+    };
+    return {
+      audioUK: localPath(sound?.uk),
+      audioUS: localPath(sound?.us)
+    };
+  }
+
+  function todayStr() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function loadState() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed.cards)) throw new Error('Dữ liệu tiến độ không hợp lệ.');
+        if (parsed.date !== todayStr()) {
+          parsed.date = todayStr();
+          parsed.newToday = 0;
+        }
+        parsed.cards.forEach(card => { card.forgotten = Boolean(card.forgotten); });
+        return parsed;
+      } catch (error) {
+        setStatus(`Không đọc được tiến độ đã lưu: ${error.message}`);
+      }
+    }
+    return {
+      cards: STARTER_WORDS.map(item => ({ ...item, level: 0, nextReview: 0, forgotten: false })),
+      date: todayStr(),
+      newToday: 0
+    };
+  }
+
+  function saveState() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function setStatus(message) {
+    const status = document.getElementById('status');
+    if (status) status.textContent = message;
+  }
+
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, character => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[character]);
+  }
+
+  function buildQueue(extraNew = 0) {
+    const now = Date.now();
+    const due = state.cards.filter(card => card.level > 0 && card.nextReview <= now);
+    const allowedNew = Math.max(0, DAILY_NEW_LIMIT + extraNew - (state.newToday || 0));
+    const fresh = state.cards.filter(card => card.level === 0).slice(0, allowedNew);
+    sessionQueue = [...new Map([...due, ...fresh].map(card => [card.w.toLowerCase(), card])).values()];
+    isRevealed = false;
+    render();
+  }
+
+  async function loadAudioIndex() {
+    try {
+      const response = await fetch('data/oxford-5000.json');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const entries = await response.json();
+      entries.forEach(entry => {
+        if (!entry.word || !entry.sound) return;
+        audioIndex[entry.word.toLowerCase()] = getAudioPaths(entry.sound);
+      });
+      state.cards.forEach(card => Object.assign(card, audioIndex[card.w.toLowerCase()] || {}));
+      saveState();
+    } catch (error) {
+      setStatus(`Không tải được dữ liệu phát âm: ${error.message}. Hãy mở trang qua máy chủ cục bộ.`);
+    }
+  }
+
+  async function loadDataset(dataset) {
+    setStatus(`Đang nạp ${dataset}...`);
+    try {
+      const response = await fetch(`data/${dataset}.json`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const entries = await response.json();
+      if (!Array.isArray(entries)) throw new Error('Dữ liệu JSON không phải danh sách từ.');
+      const existing = new Set(state.cards.map(card => card.w.toLowerCase()));
+      let added = 0;
+      entries.forEach(entry => {
+        const word = (typeof entry === 'string' ? entry : entry.word || entry.w || '').trim();
+        if (!word || existing.has(word.toLowerCase())) return;
+        const pronunciation = audioIndex[word.toLowerCase()] || {};
+        state.cards.push({
+          w: word,
+          pos: entry.pos || '',
+          ipa: entry.ipa || '',
+          vi: entry.vi || entry.meaning || '',
+          ex: entry.ex || entry.example || '',
+          ...pronunciation,
+          ...getAudioPaths(entry.sound),
+          level: 0,
+          nextReview: 0,
+          forgotten: false
+        });
+        existing.add(word.toLowerCase());
+        added += 1;
+      });
+      saveState();
+      currentView = 'study';
+      updateViewButtons();
+      buildQueue();
+      setStatus(`Đã thêm ${added} từ từ ${dataset}. Tổng kho: ${state.cards.length} từ.`);
+    } catch (error) {
+      setStatus(`Không nạp được ${dataset}: ${error.message}. Hãy mở trang qua máy chủ cục bộ.`);
+    }
+  }
+
+  function speak(word, event) {
+    if (event) event.stopPropagation();
+    const card = state.cards.find(item => item.w === word);
+    const audioUrl = card && (card.audioUS || card.audioUK);
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      audio.play().catch(error => {
+        setStatus(`Không phát được file âm thanh (${error.message}); dùng phát âm của trình duyệt.`);
+        speakWithBrowser(word);
+      });
+      return;
+    }
+    speakWithBrowser(word);
+  }
+
+  function speakWithBrowser(word) {
+    if (!('speechSynthesis' in window)) {
+      setStatus('Trình duyệt này không hỗ trợ phát âm.');
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(word);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.92;
+    window.speechSynthesis.speak(utterance);
+  }
+
+  async function enrichCard(card) {
+    if ((card.vi && card.ipa) || card.lookupPending || card.lookupAttempted) return;
+    card.lookupPending = true;
+    card.lookupAttempted = true;
+    const requests = await Promise.allSettled([
+      fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(card.w)}`)
+        .then(response => { if (!response.ok) throw new Error(`Từ điển HTTP ${response.status}`); return response.json(); }),
+      fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(card.w)}&langpair=en|vi`)
+        .then(response => { if (!response.ok) throw new Error(`Dịch HTTP ${response.status}`); return response.json(); })
+    ]);
+    card.lookupPending = false;
+    const dict = requests[0].status === 'fulfilled' ? requests[0].value : null;
+    const translation = requests[1].status === 'fulfilled' ? requests[1].value : null;
+    if (dict && dict[0]) {
+      const entry = dict[0];
+      card.ipa = entry.phonetic || entry.phonetics?.find(item => item.text)?.text || '';
+      const meaning = entry.meanings?.[0];
+      if (meaning) {
+        card.pos = meaning.partOfSpeech || '';
+        card.ex = meaning.definitions?.[0]?.example || meaning.definitions?.[0]?.definition || '';
+      }
+    }
+    if (translation?.responseData?.translatedText) {
+      card.vi = translation.responseData.translatedText.toLowerCase();
+    }
+    if (requests.every(result => result.status === 'rejected')) {
+      setStatus(`Không tra được nghĩa cho "${card.w}". Kiểm tra kết nối mạng hoặc thêm nghĩa bằng file.`);
+    }
+    saveState();
+    if (sessionQueue[0]?.w === card.w) renderCardContent(card);
+  }
+
+  function renderCardContent(card) {
+    const element = document.getElementById('cardContent');
+    if (!element) return;
+    element.innerHTML = `
+      <span class="badge">${card.level === 0 ? 'Từ mới' : `Ôn cấp ${card.level}`}${card.forgotten ? ' · Cần ôn' : ''}</span>
+      <button class="speak-btn" id="speakButton" type="button" aria-label="Phát âm">🔊</button>
+      <div class="word">${escapeHtml(card.w)}</div>
+      <div class="ipa">${escapeHtml(card.ipa || 'Chưa có phiên âm')}</div>
+      ${!isRevealed ? '<div class="tap-hint">Chạm vào thẻ để xem nghĩa</div>' : ''}
+      <div class="back-content ${isRevealed ? 'show' : ''}">
+        <div class="pos">${escapeHtml(card.pos)}</div>
+        <div class="meaning">${escapeHtml(card.vi || 'Chưa có nghĩa')}</div>
+        <div class="example">${escapeHtml(card.ex)}</div>
+      </div>
+    `;
+    document.getElementById('speakButton').addEventListener('click', event => speak(card.w, event));
+  }
+
+  function render() {
+    const mastered = state.cards.filter(card => card.level >= 3).length;
+    const learned = state.cards.filter(card => card.level > 0 && !card.forgotten).length;
+    const forgotten = state.cards.filter(card => card.forgotten).length;
+    document.getElementById('stats').innerHTML =
+      `Cần học: <b>${sessionQueue.length}</b> · Đã học: <b>${learned}</b> · Thuộc: <b>${mastered}</b> · Đã quên: <b>${forgotten}</b>`;
+    const main = document.getElementById('mainArea');
+    const controls = document.getElementById('controls');
+    const letters = document.getElementById('letters');
+
+    if (currentView !== 'study') {
+      controls.innerHTML = '';
+      if (currentView === 'browse') {
+        renderLetters(letters);
+        renderWordList(main, state.cards);
+      } else {
+        letters.hidden = true;
+        renderWordList(main, state.cards.filter(card =>
+          currentView === 'learned' ? card.level > 0 && !card.forgotten : card.forgotten
+        ));
+      }
+      return;
+    }
+
+    letters.hidden = true;
+    if (sessionQueue.length === 0) {
+      main.innerHTML = `<div class="empty"><div class="empty-icon">🎉</div><strong>Đã hoàn thành lượt học!</strong><br>Tổng kho hiện có ${state.cards.length} từ.</div>`;
+      controls.innerHTML = '<button type="button" class="btn-action btn-show" onclick="buildQueue(10)">+ Học thêm 10 từ mới</button>';
+      return;
+    }
+
+    const current = sessionQueue[0];
+    if (!current.vi || !current.ipa) enrichCard(current);
+    main.innerHTML = '<div class="card" id="cardContent" role="button" tabindex="0" aria-label="Chạm để xem nghĩa"></div>';
+    const cardElement = document.getElementById('cardContent');
+    cardElement.addEventListener('click', revealCard);
+    cardElement.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        revealCard();
+      }
+    });
+    renderCardContent(current);
+
+    if (!isRevealed) {
+      controls.innerHTML = '<button type="button" class="btn-action btn-show" onclick="revealCard()">Xem đáp án</button>';
+    } else {
+      const nextDays = [1, 2, 4, 7, 15, 30][Math.min(current.level, 5)];
+      controls.innerHTML = `
+        <button type="button" class="btn-action btn-forgot" onclick="answer(false)">Quên <span>Đánh dấu để ôn lại</span></button>
+        <button type="button" class="btn-action btn-know" onclick="answer(true)">Nhớ <span>Ôn lại sau ${nextDays} ngày</span></button>
+      `;
+    }
+  }
+
+  function renderLetters(container) {
+    const available = [...new Set(state.cards.map(card => card.w[0]?.toUpperCase()).filter(letter => /^[A-Z]$/.test(letter)))].sort();
+    if (!selectedLetter) selectedLetter = available[0] || '';
+    container.hidden = false;
+    container.innerHTML = available.map(letter =>
+      `<button type="button" data-letter="${letter}" class="${selectedLetter === letter ? 'active' : ''}">${letter}</button>`
+    ).join('');
+    container.querySelectorAll('button').forEach(button => button.addEventListener('click', () => {
+      selectedLetter = button.dataset.letter;
+      listPage = 0;
+      render();
+    }));
+  }
+
+  function renderWordList(container, cards) {
+    const filtered = cards
+      .filter(card => !selectedLetter || card.w[0]?.toUpperCase() === selectedLetter)
+      .sort((a, b) => a.w.localeCompare(b.w));
+    if (filtered.length === 0) {
+      const message = currentView === 'learned'
+        ? 'Chưa có từ nào được ghi nhớ.'
+        : currentView === 'forgotten' ? 'Chưa có từ nào được đánh dấu là đã quên.' : 'Không có từ nào ở chữ cái này.';
+      container.innerHTML = `<div class="empty">${message}</div>`;
+      return;
+    }
+    const pageSize = 50;
+    const pageCount = Math.ceil(filtered.length / pageSize);
+    listPage = Math.min(listPage, pageCount - 1);
+    const pageCards = filtered.slice(listPage * pageSize, (listPage + 1) * pageSize);
+    const groups = new Map();
+    pageCards.forEach(card => {
+      const letter = card.w[0]?.toUpperCase() || '#';
+      if (!groups.has(letter)) groups.set(letter, []);
+      groups.get(letter).push(card);
+    });
+    container.innerHTML = `<div class="word-list">${[...groups].map(([letter, words]) => `
+      <section class="letter-group">
+        <h2>${escapeHtml(letter)}</h2>
+        ${words.map((card, index) => `
+          <div class="word-row">
+            <div class="word-row-main"><strong>${escapeHtml(card.w)}</strong>
+              <span class="translation">${escapeHtml(card.vi || card.ipa || 'Chưa tra nghĩa')}</span>
+            </div>
+            <button type="button" data-word="${escapeHtml(card.w)}" aria-label="Ôn ${escapeHtml(card.w)}">Ôn từ</button>
+          </div>
+        `).join('')}
+      </section>
+    `).join('')}
+      ${pageCount > 1 ? `<div class="pagination">
+        <button type="button" data-page="${listPage - 1}" ${listPage === 0 ? 'disabled' : ''}>Trước</button>
+        <span>${listPage + 1} / ${pageCount} · ${filtered.length} từ</span>
+        <button type="button" data-page="${listPage + 1}" ${listPage === pageCount - 1 ? 'disabled' : ''}>Tiếp</button>
+      </div>` : ''}
+    </div>`;
+    container.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => {
+      listPage = Number(button.dataset.page);
+      render();
+    }));
+    container.querySelectorAll('[data-word]').forEach(button => button.addEventListener('click', () => {
+      const selected = state.cards.find(card => card.w === button.dataset.word);
+      if (!selected) return;
+      currentView = 'study';
+      sessionQueue = [selected];
+      isRevealed = false;
+      updateViewButtons();
+      render();
+    }));
+  }
+
+  function revealCard() {
+    if (isRevealed || sessionQueue.length === 0) return;
+    isRevealed = true;
+    speak(sessionQueue[0].w);
+    render();
+  }
+
+  function answer(remembered) {
+    const card = sessionQueue.shift();
+    if (!card) return;
+    if (card.level === 0) state.newToday = (state.newToday || 0) + 1;
+    if (remembered) {
+      card.level += 1;
+      const days = [1, 2, 4, 7, 15, 30][Math.min(card.level - 1, 5)];
+      card.nextReview = Date.now() + days * 86400000;
+      card.forgotten = false;
+    } else {
+      card.level = Math.max(1, card.level);
+      card.nextReview = Date.now();
+      card.forgotten = true;
+      if (currentView === 'study') sessionQueue.splice(Math.min(3, sessionQueue.length), 0, card);
+    }
+    isRevealed = false;
+    saveState();
+    render();
+  }
+
+  function parseAndAdd(rawText) {
+    const existing = new Set(state.cards.map(card => card.w.toLowerCase()));
+    let entries;
+    try {
+      const parsed = JSON.parse(rawText);
+      if (!Array.isArray(parsed)) throw new Error('JSON cần có định dạng danh sách.');
+      entries = parsed;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        entries = rawText.split(/\r?\n/).map(line => {
+          const parts = line.split(/[,;\t]/);
+          return { w: parts[0]?.replace(/["']/g, '').trim(), vi: parts[1]?.replace(/["']/g, '').trim() || '' };
+        });
+      } else {
+        setStatus(error.message);
+        return;
+      }
+    }
+    let added = 0;
+    entries.forEach(entry => {
+      const word = (typeof entry === 'string' ? entry : entry.w || entry.word || '').trim();
+      if (!word || existing.has(word.toLowerCase())) return;
+      state.cards.push({
+        w: word,
+        pos: entry.pos || '',
+        ipa: entry.ipa || '',
+        vi: entry.vi || entry.meaning || '',
+        ex: entry.ex || entry.example || '',
+        ...(audioIndex[word.toLowerCase()] || {}),
+        ...getAudioPaths(entry.sound),
+        level: Number(entry.level) || 0,
+        nextReview: Number(entry.nextReview) || 0,
+        forgotten: Boolean(entry.forgotten)
+      });
+      existing.add(word.toLowerCase());
+      added += 1;
+    });
+    saveState();
+    currentView = 'study';
+    updateViewButtons();
+    buildQueue();
+    setStatus(`Đã thêm ${added} từ. Tổng kho: ${state.cards.length} từ.`);
+    closeModal();
+  }
+
+  function handleFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => parseAndAdd(String(reader.result || ''));
+    reader.onerror = () => setStatus(`Không đọc được file: ${reader.error?.message || 'lỗi không xác định'}`);
+    reader.readAsText(file);
+    event.target.value = '';
+  }
+
+  async function exportBackup() {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(state.cards));
+      setStatus('Đã sao chép toàn bộ từ và tiến độ vào clipboard.');
+    } catch (error) {
+      setStatus(`Không sao chép được backup: ${error.message}`);
+    }
+  }
+
+  function updateViewButtons() {
+    document.querySelectorAll('[data-view]').forEach(button => {
+      button.classList.toggle('active', button.dataset.view === currentView);
+    });
+  }
+
+  function openModal() { document.getElementById('modal').classList.add('open'); }
+  function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+  document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
+    currentView = button.dataset.view;
+    listPage = 0;
+    selectedLetter = currentView === 'browse'
+      ? [...new Set(state.cards.map(card => card.w[0]?.toUpperCase()).filter(letter => /^[A-Z]$/.test(letter)))].sort()[0] || ''
+      : '';
+    updateViewButtons();
+    if (currentView === 'study') buildQueue();
+    else render();
+  }));
+  document.getElementById('fileInput').addEventListener('change', handleFile);
+  document.getElementById('importButton').addEventListener('click', () => {
+    const value = document.getElementById('bulkText').value.trim();
+    if (value) parseAndAdd(value);
+    document.getElementById('bulkText').value = '';
+  });
+  document.getElementById('exportButton').addEventListener('click', exportBackup);
+  document.addEventListener('keydown', event => {
+    if (document.getElementById('modal').classList.contains('open')) {
+      if (event.key === 'Escape') closeModal();
+      return;
+    }
+    if (currentView !== 'study') return;
+    if (event.code === 'Space') { event.preventDefault(); revealCard(); }
+    if (event.key === '1' && isRevealed) answer(false);
+    if (event.key === '2' && isRevealed) answer(true);
+  });
+
+  buildQueue();
+  loadAudioIndex();
+</script>
+</body>
+</html>
