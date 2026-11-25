@@ -84,10 +84,12 @@
 
   let state = loadState();
   let sessionQueue = [];
+  let queueIndex = 0;
   let isRevealed = false;
   let currentView = 'study';
   let selectedLetter = '';
   let listPage = 0;
+  let returnContext = null;
   let audioIndex = {};
 
   function getAudioPaths(sound) {
@@ -149,6 +151,7 @@
     const allowedNew = Math.max(0, DAILY_NEW_LIMIT + extraNew - (state.newToday || 0));
     const fresh = state.cards.filter(card => card.level === 0).slice(0, allowedNew);
     sessionQueue = [...new Map([...due, ...fresh].map(card => [card.w.toLowerCase(), card])).values()];
+    queueIndex = 0;
     isRevealed = false;
     render();
   }
@@ -199,6 +202,7 @@
       });
       saveState();
       currentView = 'study';
+      returnContext = null;
       updateViewButtons();
       buildQueue();
       setStatus(`Đã thêm ${added} từ từ ${dataset}. Tổng kho: ${state.cards.length} từ.`);
@@ -263,7 +267,7 @@
       setStatus(`Không tra được nghĩa cho "${card.w}". Kiểm tra kết nối mạng hoặc thêm nghĩa bằng file.`);
     }
     saveState();
-    if (sessionQueue[0]?.w === card.w) renderCardContent(card);
+    if (sessionQueue[queueIndex]?.w === card.w) renderCardContent(card);
   }
 
   function renderCardContent(card) {
@@ -311,11 +315,14 @@
     letters.hidden = true;
     if (sessionQueue.length === 0) {
       main.innerHTML = `<div class="empty"><div class="empty-icon">🎉</div><strong>Đã hoàn thành lượt học!</strong><br>Tổng kho hiện có ${state.cards.length} từ.</div>`;
-      controls.innerHTML = '<button type="button" class="btn-action btn-show" onclick="buildQueue(10)">+ Học thêm 10 từ mới</button>';
+      controls.innerHTML = `
+        <button type="button" class="btn-action btn-show" onclick="buildQueue(10)">+ Học thêm 10 từ mới</button>
+        ${returnContext ? '<button type="button" class="btn-back" onclick="returnToList()">← Quay lại danh sách</button>' : ''}
+      `;
       return;
     }
 
-    const current = sessionQueue[0];
+    const current = sessionQueue[queueIndex];
     if (!current.vi || !current.ipa) enrichCard(current);
     main.innerHTML = '<div class="card" id="cardContent" role="button" tabindex="0" aria-label="Chạm để xem nghĩa"></div>';
     const cardElement = document.getElementById('cardContent');
@@ -328,13 +335,24 @@
     });
     renderCardContent(current);
 
+    const navigation = `
+      <button type="button" class="btn-nav" onclick="navigateCard(-1)" ${queueIndex === 0 ? 'disabled' : ''} aria-label="Từ trước">← Từ trước</button>
+      <button type="button" class="btn-nav" onclick="navigateCard(1)" ${queueIndex === sessionQueue.length - 1 ? 'disabled' : ''} aria-label="Từ tiếp theo">Từ tiếp →</button>
+    `;
+    const backButton = returnContext
+      ? '<button type="button" class="btn-back" onclick="returnToList()">← Quay lại danh sách</button>'
+      : '';
     if (!isRevealed) {
-      controls.innerHTML = '<button type="button" class="btn-action btn-show" onclick="revealCard()">Xem đáp án</button>';
+      controls.innerHTML = `${navigation}
+        <button type="button" class="btn-action btn-show" onclick="revealCard()">Xem đáp án</button>
+        ${backButton}
+      `;
     } else {
       const nextDays = [1, 2, 4, 7, 15, 30][Math.min(current.level, 5)];
-      controls.innerHTML = `
+      controls.innerHTML = `${navigation}
         <button type="button" class="btn-action btn-forgot" onclick="answer(false)">Quên <span>Đánh dấu để ôn lại</span></button>
         <button type="button" class="btn-action btn-know" onclick="answer(true)">Nhớ <span>Ôn lại sau ${nextDays} ngày</span></button>
+        ${backButton}
       `;
     }
   }
@@ -400,23 +418,43 @@
     container.querySelectorAll('[data-word]').forEach(button => button.addEventListener('click', () => {
       const selected = state.cards.find(card => card.w === button.dataset.word);
       if (!selected) return;
+      returnContext = { view: currentView, letter: selectedLetter, page: listPage };
       currentView = 'study';
-      sessionQueue = [selected];
+      sessionQueue = filtered;
+      queueIndex = sessionQueue.findIndex(card => card.w === selected.w);
       isRevealed = false;
       updateViewButtons();
       render();
     }));
   }
 
+  function navigateCard(direction) {
+    const targetIndex = queueIndex + direction;
+    if (targetIndex < 0 || targetIndex >= sessionQueue.length) return;
+    queueIndex = targetIndex;
+    isRevealed = false;
+    render();
+  }
+
+  function returnToList() {
+    if (!returnContext) return;
+    currentView = returnContext.view;
+    selectedLetter = returnContext.letter;
+    listPage = returnContext.page;
+    returnContext = null;
+    updateViewButtons();
+    render();
+  }
+
   function revealCard() {
     if (isRevealed || sessionQueue.length === 0) return;
     isRevealed = true;
-    speak(sessionQueue[0].w);
+    speak(sessionQueue[queueIndex].w);
     render();
   }
 
   function answer(remembered) {
-    const card = sessionQueue.shift();
+    const card = sessionQueue[queueIndex];
     if (!card) return;
     if (card.level === 0) state.newToday = (state.newToday || 0) + 1;
     if (remembered) {
@@ -428,8 +466,12 @@
       card.level = Math.max(1, card.level);
       card.nextReview = Date.now();
       card.forgotten = true;
-      if (currentView === 'study') sessionQueue.splice(Math.min(3, sessionQueue.length), 0, card);
     }
+    sessionQueue.splice(queueIndex, 1);
+    if (!remembered && currentView === 'study') {
+      sessionQueue.splice(Math.min(queueIndex + 3, sessionQueue.length), 0, card);
+    }
+    if (queueIndex >= sessionQueue.length) queueIndex = Math.max(0, sessionQueue.length - 1);
     isRevealed = false;
     saveState();
     render();
@@ -510,6 +552,7 @@
 
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
     currentView = button.dataset.view;
+    returnContext = null;
     listPage = 0;
     selectedLetter = currentView === 'browse'
       ? [...new Set(state.cards.map(card => card.w[0]?.toUpperCase()).filter(letter => /^[A-Z]$/.test(letter)))].sort()[0] || ''
@@ -532,6 +575,8 @@
     }
     if (currentView !== 'study') return;
     if (event.code === 'Space') { event.preventDefault(); revealCard(); }
+    if (event.key === 'ArrowLeft') navigateCard(-1);
+    if (event.key === 'ArrowRight') navigateCard(1);
     if (event.key === '1' && isRevealed) answer(false);
     if (event.key === '2' && isRevealed) answer(true);
   });
