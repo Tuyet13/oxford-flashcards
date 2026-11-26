@@ -192,11 +192,8 @@ main {
   line-height: 1.5;
 }
 
-.example-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.example-block {
+  width: 100%;
 }
 
 .example {
@@ -206,9 +203,11 @@ main {
 
 .example-actions {
   display: flex;
-  flex: 0 0 auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  margin-top: 10px;
 }
 
 .example-speak-btn {
@@ -233,6 +232,35 @@ main {
   color: var(--primary);
   font-size: 13px;
   font-weight: 650;
+}
+
+.example-rate {
+  min-height: 36px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #ffffff14;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.example-rate select {
+  max-width: 92px;
+  padding: 5px 4px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.example-rate option {
+  background: var(--panel);
+  color: var(--text);
 }
 
 .example-translation {
