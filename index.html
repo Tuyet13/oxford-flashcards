@@ -315,7 +315,7 @@
       <button class="speak-btn" id="speakButton" type="button" aria-label="Phát âm"><i class="bi bi-volume-up-fill" aria-hidden="true"></i></button>
       <div class="word">${escapeHtml(card.w)}</div>
       <div class="ipa">${escapeHtml(card.ipa || 'Chưa có phiên âm')}</div>
-      ${!isRevealed ? '<div class="tap-hint">Chạm vào thẻ để xem nghĩa</div>' : ''}
+      <div class="tap-hint">${isRevealed ? 'Chạm lại để ẩn nghĩa' : 'Chạm vào thẻ để xem nghĩa'}</div>
       <div class="back-content ${isRevealed ? 'show' : ''}">
         <div class="pos">${escapeHtml(card.pos)}</div>
         <div class="meaning">${escapeHtml(card.vi || 'Chưa có nghĩa')}</div>
@@ -378,13 +378,13 @@
 
     const current = sessionQueue[queueIndex];
     if (!current.vi || !current.ipa) enrichCard(current);
-    main.innerHTML = '<div class="card" id="cardContent" role="button" tabindex="0" aria-label="Chạm để xem nghĩa"></div>';
+    main.innerHTML = `<div class="card" id="cardContent" role="button" tabindex="0" aria-label="${isRevealed ? 'Chạm để ẩn nghĩa' : 'Chạm để xem nghĩa'}"></div>`;
     const cardElement = document.getElementById('cardContent');
-    cardElement.addEventListener('click', revealCard);
+    cardElement.addEventListener('click', toggleCardAnswer);
     cardElement.addEventListener('keydown', event => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        revealCard();
+        toggleCardAnswer();
       }
     });
     renderCardContent(current);
@@ -398,7 +398,7 @@
       : '';
     if (!isRevealed) {
       controls.innerHTML = `${navigation}
-        <button type="button" class="btn-action btn-show" onclick="revealCard()">Xem đáp án</button>
+        <button type="button" class="btn-action btn-show" onclick="toggleCardAnswer()">Xem đáp án</button>
         ${backButton}
       `;
     } else {
@@ -502,10 +502,14 @@
     render();
   }
 
-  function revealCard() {
-    if (isRevealed || sessionQueue.length === 0) return;
-    isRevealed = true;
-    speak(sessionQueue[queueIndex].w);
+  function toggleCardAnswer() {
+    if (sessionQueue.length === 0) return;
+    isRevealed = !isRevealed;
+    if (isRevealed) {
+      speak(sessionQueue[queueIndex].w);
+    } else if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
     render();
   }
 
@@ -631,7 +635,7 @@
       return;
     }
     if (currentView !== 'study') return;
-    if (event.code === 'Space') { event.preventDefault(); revealCard(); }
+    if (event.code === 'Space') { event.preventDefault(); toggleCardAnswer(); }
     if (event.key === 'ArrowLeft') navigateCard(-1);
     if (event.key === 'ArrowRight') navigateCard(1);
     if (event.key === '1' && isRevealed) answer(false);
