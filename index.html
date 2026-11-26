@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0f172a" />
   <title>Oxford Flashcards</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -90,6 +91,7 @@
   let selectedLetter = '';
   let listPage = 0;
   let returnContext = null;
+  let showExampleTranslation = false;
   let audioIndex = {};
 
   function getAudioPaths(sound) {
@@ -153,6 +155,7 @@
     sessionQueue = [...new Map([...due, ...fresh].map(card => [card.w.toLowerCase(), card])).values()];
     queueIndex = 0;
     isRevealed = false;
+    showExampleTranslation = false;
     render();
   }
 
@@ -228,7 +231,7 @@
 
   function speakWithBrowser(word) {
     if (!('speechSynthesis' in window)) {
-      setStatus('Trình duyệt này không hỗ trợ phát âm.');
+      setStatus('Trình duyệt này không hỗ trợ đọc văn bản thành tiếng.');
       return;
     }
     window.speechSynthesis.cancel();
@@ -236,6 +239,40 @@
     utterance.lang = 'en-US';
     utterance.rate = 0.92;
     window.speechSynthesis.speak(utterance);
+  }
+
+  function speakExample(text, event) {
+    event.stopPropagation();
+    speakWithBrowser(text);
+  }
+
+  async function translateExample(card, event) {
+    event.stopPropagation();
+    if (card.exVi) {
+      showExampleTranslation = !showExampleTranslation;
+      renderCardContent(card);
+      return;
+    }
+
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.innerHTML = '<i class="bi bi-hourglass-split" aria-hidden="true"></i> Đang dịch';
+    try {
+      const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(card.ex)}&langpair=en|vi`);
+      if (!response.ok) throw new Error(`Dịch HTTP ${response.status}`);
+      const result = await response.json();
+      const translation = result.responseData?.translatedText?.trim();
+      if (!translation) throw new Error(result.responseDetails || 'Dịch vụ không trả về bản dịch.');
+      card.exVi = translation;
+      const isCurrentCard = sessionQueue[queueIndex]?.w === card.w;
+      if (isCurrentCard) showExampleTranslation = true;
+      saveState();
+      setStatus('');
+      if (isCurrentCard) renderCardContent(card);
+    } catch (error) {
+      setStatus(`Không dịch được câu ví dụ: ${error.message}`);
+      if (sessionQueue[queueIndex]?.w === card.w) renderCardContent(card);
+    }
   }
 
   async function enrichCard(card) {
@@ -275,17 +312,34 @@
     if (!element) return;
     element.innerHTML = `
       <span class="badge">${card.level === 0 ? 'Từ mới' : `Ôn cấp ${card.level}`}${card.forgotten ? ' · Cần ôn' : ''}</span>
-      <button class="speak-btn" id="speakButton" type="button" aria-label="Phát âm">🔊</button>
+      <button class="speak-btn" id="speakButton" type="button" aria-label="Phát âm"><i class="bi bi-volume-up-fill" aria-hidden="true"></i></button>
       <div class="word">${escapeHtml(card.w)}</div>
       <div class="ipa">${escapeHtml(card.ipa || 'Chưa có phiên âm')}</div>
       ${!isRevealed ? '<div class="tap-hint">Chạm vào thẻ để xem nghĩa</div>' : ''}
       <div class="back-content ${isRevealed ? 'show' : ''}">
         <div class="pos">${escapeHtml(card.pos)}</div>
         <div class="meaning">${escapeHtml(card.vi || 'Chưa có nghĩa')}</div>
-        <div class="example">${escapeHtml(card.ex)}</div>
+        ${card.ex ? `<div class="example-block">
+          <div class="example-row">
+            <div class="example">${escapeHtml(card.ex)}</div>
+            <div class="example-actions">
+              <button class="example-speak-btn" id="exampleSpeakButton" type="button" aria-label="Đọc ví dụ"><i class="bi bi-volume-up-fill" aria-hidden="true"></i></button>
+              <button class="example-translate-btn" id="exampleTranslateButton" type="button" aria-expanded="${showExampleTranslation}" aria-label="${showExampleTranslation ? 'Ẩn bản dịch' : 'Dịch ví dụ'}"><i class="bi bi-translate" aria-hidden="true"></i><span>${showExampleTranslation ? 'Ẩn dịch' : 'Dịch'}</span></button>
+            </div>
+          </div>
+          ${card.exVi && showExampleTranslation ? `<div class="example-translation">${escapeHtml(card.exVi)}</div>` : ''}
+        </div>` : ''}
       </div>
     `;
     document.getElementById('speakButton').addEventListener('click', event => speak(card.w, event));
+    const exampleSpeakButton = document.getElementById('exampleSpeakButton');
+    if (exampleSpeakButton) {
+      exampleSpeakButton.addEventListener('click', event => speakExample(card.ex, event));
+    }
+    const exampleTranslateButton = document.getElementById('exampleTranslateButton');
+    if (exampleTranslateButton) {
+      exampleTranslateButton.addEventListener('click', event => translateExample(card, event));
+    }
   }
 
   function render() {
@@ -314,10 +368,10 @@
 
     letters.hidden = true;
     if (sessionQueue.length === 0) {
-      main.innerHTML = `<div class="empty"><div class="empty-icon">🎉</div><strong>Đã hoàn thành lượt học!</strong><br>Tổng kho hiện có ${state.cards.length} từ.</div>`;
+      main.innerHTML = `<div class="empty"><div class="empty-icon"><i class="bi bi-stars" aria-hidden="true"></i></div><strong>Đã hoàn thành lượt học!</strong><br>Tổng kho hiện có ${state.cards.length} từ.</div>`;
       controls.innerHTML = `
         <button type="button" class="btn-action btn-show" onclick="buildQueue(10)">+ Học thêm 10 từ mới</button>
-        ${returnContext ? '<button type="button" class="btn-back" onclick="returnToList()">← Quay lại danh sách</button>' : ''}
+        ${returnContext ? '<button type="button" class="btn-back" onclick="returnToList()"><i class="bi bi-arrow-left" aria-hidden="true"></i> Quay lại danh sách</button>' : ''}
       `;
       return;
     }
@@ -336,11 +390,11 @@
     renderCardContent(current);
 
     const navigation = `
-      <button type="button" class="btn-nav" onclick="navigateCard(-1)" ${queueIndex === 0 ? 'disabled' : ''} aria-label="Từ trước">← Từ trước</button>
-      <button type="button" class="btn-nav" onclick="navigateCard(1)" ${queueIndex === sessionQueue.length - 1 ? 'disabled' : ''} aria-label="Từ tiếp theo">Từ tiếp →</button>
+      <button type="button" class="btn-nav" onclick="navigateCard(-1)" ${queueIndex === 0 ? 'disabled' : ''} aria-label="Từ trước"><i class="bi bi-chevron-left" aria-hidden="true"></i> Từ trước</button>
+      <button type="button" class="btn-nav" onclick="navigateCard(1)" ${queueIndex === sessionQueue.length - 1 ? 'disabled' : ''} aria-label="Từ tiếp theo">Từ tiếp <i class="bi bi-chevron-right" aria-hidden="true"></i></button>
     `;
     const backButton = returnContext
-      ? '<button type="button" class="btn-back" onclick="returnToList()">← Quay lại danh sách</button>'
+      ? '<button type="button" class="btn-back" onclick="returnToList()"><i class="bi bi-arrow-left" aria-hidden="true"></i> Quay lại danh sách</button>'
       : '';
     if (!isRevealed) {
       controls.innerHTML = `${navigation}
@@ -423,6 +477,7 @@
       sessionQueue = filtered;
       queueIndex = sessionQueue.findIndex(card => card.w === selected.w);
       isRevealed = false;
+      showExampleTranslation = false;
       updateViewButtons();
       render();
     }));
@@ -433,6 +488,7 @@
     if (targetIndex < 0 || targetIndex >= sessionQueue.length) return;
     queueIndex = targetIndex;
     isRevealed = false;
+    showExampleTranslation = false;
     render();
   }
 
@@ -473,6 +529,7 @@
     }
     if (queueIndex >= sessionQueue.length) queueIndex = Math.max(0, sessionQueue.length - 1);
     isRevealed = false;
+    showExampleTranslation = false;
     saveState();
     render();
   }

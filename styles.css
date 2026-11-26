@@ -192,6 +192,63 @@ main {
   line-height: 1.5;
 }
 
+.example-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.example {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.example-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.example-speak-btn {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: #ffffff14;
+  color: var(--primary);
+}
+
+.example-translate-btn {
+  min-height: 36px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #ffffff14;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.example-translation {
+  margin-top: 9px;
+  color: #fbcfe8;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.speak-btn i,
+.example-speak-btn i,
+.example-translate-btn i {
+  font-size: 16px;
+}
+
 .back-content {
   width: 100%;
   display: none;
