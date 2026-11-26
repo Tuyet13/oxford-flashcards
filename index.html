@@ -39,6 +39,12 @@
     <div class="modal-box">
       <h2 id="modalTitle">Nạp từ vựng / sao lưu</h2>
       <p>Chọn file .txt, .csv, .json hoặc dán danh sách từ (mỗi từ một dòng). Bản sao lưu JSON có thể nạp lại để khôi phục tiến độ.</p>
+      <p class="translation-disclaimer">Dùng Google Dịch để tạo bản nháp cho Oxford 3000 + 5000 theo từng lô. Bản dịch máy vẫn có thể sai và cần kiểm tra; dịch vụ có thể giới hạn yêu cầu. Có thể dừng rồi chạy lại để tiếp tục; tiến độ lưu trên thiết bị này.</p>
+      <div class="row">
+        <button type="button" class="primary" id="translateAllButton">Dịch nháp toàn bộ kho</button>
+        <button type="button" id="stopTranslationButton" disabled>Dừng dịch</button>
+      </div>
+      <div class="batch-progress" id="batchProgress" role="status" aria-live="polite"></div>
       <label class="file-label">
         Chọn file từ máy
         <input type="file" id="fileInput" accept=".txt,.csv,.json" hidden />

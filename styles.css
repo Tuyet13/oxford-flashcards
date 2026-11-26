@@ -249,7 +249,7 @@ main {
 }
 
 .example-rate select {
-  max-width: 92px;
+  max-width: 112px;
   padding: 5px 4px;
   border: 0;
   outline: 0;
@@ -269,6 +269,28 @@ main {
   font-size: 14px;
   line-height: 1.5;
   text-align: left;
+}
+
+.translation-label {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.translation-disclaimer {
+  padding: 10px;
+  border: 1px solid #f472b655;
+  border-radius: 10px;
+  background: #f472b611;
+}
+
+.batch-progress {
+  min-height: 18px;
+  color: var(--primary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .speak-btn i,
@@ -466,10 +488,12 @@ main {
 
 .modal-box {
   width: min(100%, 440px);
+  max-height: calc(100vh - 32px);
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--panel);

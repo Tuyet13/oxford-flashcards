@@ -1,7 +1,10 @@
   const STORAGE_KEY = 'oxford_srs_v1';
   const DAILY_NEW_LIMIT = 15;
-  const DEFAULT_SPEECH_RATE = 0.92;
-  const SPEECH_RATES = [0.7, DEFAULT_SPEECH_RATE, 1.15];
+  const DEFAULT_SPEECH_RATE = 1;
+  const SPEECH_RATES = [0.6, DEFAULT_SPEECH_RATE, 1.4];
+  const CURRENT_MEANING_SOURCE = 'google-translate-en-vi-v1';
+  const LEGACY_MEANING_SOURCE = 'mymemory-en-v0';
+  const LEGACY_MEANING_SOURCES = new Set([LEGACY_MEANING_SOURCE, 'mymemory-en-US-v1']);
 
   let state = loadState();
   let sessionQueue = [];
@@ -13,6 +16,13 @@
   let returnContext = null;
   let showExampleTranslation = false;
   let audioIndex = {};
+  const legacyTranslationRefreshes = new Set();
+  let translationBatchRunning = false;
+  let stopTranslationBatch = false;
+
+  function isLegacyMeaningSource(source) {
+    return LEGACY_MEANING_SOURCES.has(source);
+  }
 
   function getAudioPaths(sound) {
     const localPath = paths => {
@@ -42,7 +52,15 @@
         parsed.speechRate = SPEECH_RATES.includes(Number(parsed.speechRate))
           ? Number(parsed.speechRate)
           : DEFAULT_SPEECH_RATE;
-        parsed.cards.forEach(card => { card.forgotten = Boolean(card.forgotten); });
+        parsed.cards.forEach(card => {
+          card.forgotten = Boolean(card.forgotten);
+          if (!card.viSource && card.lookupAttempted && card.vi) {
+            card.viSource = LEGACY_MEANING_SOURCE;
+          }
+          if (!card.exViSource && card.exVi) {
+            card.exViSource = LEGACY_MEANING_SOURCE;
+          }
+        });
         return parsed;
       } catch (error) {
         setStatus(`Không đọc được tiến độ đã lưu: ${error.message}`);
@@ -138,8 +156,10 @@
       updateViewButtons();
       buildQueue();
       setStatus(`Đã thêm ${added} từ từ ${dataset}. Tổng kho: ${state.cards.length} từ.`);
+      return true;
     } catch (error) {
       setStatus(`Không nạp được ${dataset}: ${error.message}. Hãy mở trang qua máy chủ cục bộ.`);
+      return false;
     }
   }
 
@@ -175,9 +195,37 @@
     speakWithBrowser(text, state.speechRate);
   }
 
+  async function translateText(text) {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&q=${encodeURIComponent(text)}`;
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          const error = new Error(`Google Dịch HTTP ${response.status}`);
+          if (response.status === 429 || response.status === 402 || response.status === 403) {
+            error.code = 'TRANSLATION_QUOTA';
+          }
+          throw error;
+        }
+        const result = await response.json();
+        const translation = Array.isArray(result?.[0])
+          ? result[0].map(part => Array.isArray(part) ? part[0] : '').filter(Boolean).join('').trim()
+          : '';
+        if (!translation) throw new Error('Google Dịch không trả về bản dịch.');
+        return translation;
+      } catch (error) {
+        if (error.code === 'TRANSLATION_QUOTA' || attempt === 2) throw error;
+        lastError = error;
+        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+    throw lastError;
+  }
+
   async function translateExample(card, event) {
     event.stopPropagation();
-    if (card.exVi) {
+    if (card.exVi && !isLegacyMeaningSource(card.exViSource)) {
       showExampleTranslation = !showExampleTranslation;
       renderCardContent(card);
       return;
@@ -187,12 +235,9 @@
     button.disabled = true;
     button.innerHTML = '<i class="bi bi-hourglass-split" aria-hidden="true"></i> Đang dịch';
     try {
-      const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(card.ex)}&langpair=en|vi`);
-      if (!response.ok) throw new Error(`Dịch HTTP ${response.status}`);
-      const result = await response.json();
-      const translation = result.responseData?.translatedText?.trim();
-      if (!translation) throw new Error(result.responseDetails || 'Dịch vụ không trả về bản dịch.');
-      card.exVi = translation;
+      card.exVi = await translateText(card.ex);
+      card.exViSource = CURRENT_MEANING_SOURCE;
+      card.exViAttempted = true;
       const isCurrentCard = sessionQueue[queueIndex]?.w === card.w;
       if (isCurrentCard) showExampleTranslation = true;
       saveState();
@@ -204,41 +249,103 @@
     }
   }
 
-  async function enrichCard(card) {
-    if ((card.vi && card.ipa) || card.lookupPending || card.lookupAttempted) return;
+  async function enrichCard(card, force = false, persist = true) {
+    const refreshLegacyMeaning = isLegacyMeaningSource(card.viSource);
+    const refreshLegacyExample = isLegacyMeaningSource(card.exViSource);
+    const needsExampleTranslation = Boolean(card.ex && (!card.exVi || refreshLegacyExample));
+    const needsLookup = !card.vi || !card.ipa || !card.ex || refreshLegacyMeaning;
+    if ((!needsLookup && !needsExampleTranslation) || card.lookupPending) {
+      return {
+        complete: Boolean(card.vi && card.ex && card.exVi),
+        quotaExceeded: false
+      };
+    }
+    if (!force && card.lookupAttempted && !refreshLegacyMeaning &&
+      (!needsExampleTranslation || card.exViAttempted)) {
+      return { complete: false, quotaExceeded: false };
+    }
+    if (!force && refreshLegacyMeaning && legacyTranslationRefreshes.has(card.w)) {
+      return { complete: false, quotaExceeded: false };
+    }
+    if (refreshLegacyMeaning) legacyTranslationRefreshes.add(card.w);
     card.lookupPending = true;
     card.lookupAttempted = true;
     const requests = await Promise.allSettled([
       fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(card.w)}`)
         .then(response => { if (!response.ok) throw new Error(`Từ điển HTTP ${response.status}`); return response.json(); }),
-      fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(card.w)}&langpair=en|vi`)
-        .then(response => { if (!response.ok) throw new Error(`Dịch HTTP ${response.status}`); return response.json(); })
+      !card.vi || refreshLegacyMeaning ? translateText(card.w) : Promise.resolve(null)
     ]);
-    card.lookupPending = false;
     const dict = requests[0].status === 'fulfilled' ? requests[0].value : null;
-    const translation = requests[1].status === 'fulfilled' ? requests[1].value : null;
     if (dict && dict[0]) {
       const entry = dict[0];
-      card.ipa = entry.phonetic || entry.phonetics?.find(item => item.text)?.text || '';
+      card.ipa = card.ipa || entry.phonetic || entry.phonetics?.find(item => item.text)?.text || '';
       const meaning = entry.meanings?.[0];
       if (meaning) {
-        card.pos = meaning.partOfSpeech || '';
-        card.ex = meaning.definitions?.[0]?.example || meaning.definitions?.[0]?.definition || '';
+        card.pos = card.pos || meaning.partOfSpeech || '';
+        card.ex = card.ex || meaning.definitions?.[0]?.example || meaning.definitions?.[0]?.definition || '';
       }
     }
-    if (translation?.responseData?.translatedText) {
-      card.vi = translation.responseData.translatedText.toLowerCase();
+    const wordTranslation = requests[1].status === 'fulfilled' ? requests[1].value : null;
+    if (wordTranslation && (!card.vi || refreshLegacyMeaning)) {
+      card.vi = wordTranslation.toLowerCase();
+      card.viSource = CURRENT_MEANING_SOURCE;
+      legacyTranslationRefreshes.delete(card.w);
     }
-    if (requests.every(result => result.status === 'rejected')) {
-      setStatus(`Không tra được nghĩa cho "${card.w}". Kiểm tra kết nối mạng hoặc thêm nghĩa bằng file.`);
+    let translationFailed = requests[1].status === 'rejected';
+    let translationError = translationFailed ? requests[1].reason.message : '';
+    let quotaExceeded = requests.some(result =>
+      result.status === 'rejected' && result.reason?.code === 'TRANSLATION_QUOTA'
+    );
+    if (!quotaExceeded && card.ex && (!card.exVi || refreshLegacyExample) &&
+      (!card.exViAttempted || force || refreshLegacyExample)) {
+      card.exViAttempted = true;
+      try {
+        card.exVi = await translateText(card.ex);
+        card.exViSource = CURRENT_MEANING_SOURCE;
+      } catch (error) {
+        translationFailed = true;
+        translationError = error.message;
+        if (error.code === 'TRANSLATION_QUOTA') quotaExceeded = true;
+        if (error.code !== 'TRANSLATION_QUOTA') {
+          setStatus(`Không dịch được ví dụ cho "${card.w}": ${error.message}`);
+        }
+      }
     }
-    saveState();
+    card.lookupPending = false;
+    if (refreshLegacyMeaning && !wordTranslation) {
+      const reason = requests[1].status === 'rejected'
+        ? requests[1].reason.message
+        : 'Dịch vụ không trả về bản dịch.';
+      setStatus(`Không cập nhật được nghĩa cho "${card.w}": ${reason}`);
+    } else if (requests[0].status === 'rejected' || requests[1].status === 'rejected') {
+      const failedService = requests[0].status === 'rejected' ? 'từ điển' : 'dịch';
+      const failedRequest = requests[0].status === 'rejected' ? requests[0] : requests[1];
+      setStatus(`Không truy cập được dịch vụ ${failedService} cho "${card.w}": ${failedRequest.reason.message}`);
+    }
+    if (persist) saveState();
     if (sessionQueue[queueIndex]?.w === card.w) renderCardContent(card);
+    return {
+      complete: Boolean(card.vi && card.ex && card.exVi),
+      quotaExceeded,
+      translationFailed,
+      translationError
+    };
+  }
+
+  function getMeaningForDisplay(card) {
+    if (isLegacyMeaningSource(card.viSource)) {
+      return card.lookupPending ? 'Đang cập nhật nghĩa...' : 'Nghĩa cần cập nhật';
+    }
+    return card.vi || 'Chưa có nghĩa';
   }
 
   function renderCardContent(card) {
     const element = document.getElementById('cardContent');
     if (!element) return;
+    const exampleTranslation = card.exVi && !isLegacyMeaningSource(card.exViSource)
+      ? card.exVi
+      : '';
+    const exampleTranslationVisible = Boolean(exampleTranslation && showExampleTranslation);
     element.innerHTML = `
       <span class="badge">${card.level === 0 ? 'Từ mới' : `Ôn cấp ${card.level}`}${card.forgotten ? ' · Cần ôn' : ''}</span>
       <button class="speak-btn" id="speakButton" type="button" aria-label="Phát âm"><i class="bi bi-volume-up-fill" aria-hidden="true"></i></button>
@@ -247,20 +354,21 @@
       <div class="tap-hint">${isRevealed ? 'Chạm lại để ẩn nghĩa' : 'Chạm vào thẻ để xem nghĩa'}</div>
       <div class="back-content ${isRevealed ? 'show' : ''}">
         <div class="pos">${escapeHtml(card.pos)}</div>
-        <div class="meaning">${escapeHtml(card.vi || 'Chưa có nghĩa')}</div>
+        <div class="meaning">${escapeHtml(getMeaningForDisplay(card))}</div>
+        ${card.viSource === CURRENT_MEANING_SOURCE ? '<div class="translation-label">Bản dịch máy · cần kiểm tra</div>' : ''}
         ${card.ex ? `<div class="example-block">
           <div class="example">${escapeHtml(card.ex)}</div>
-          ${card.exVi && showExampleTranslation ? `<div class="example-translation">${escapeHtml(card.exVi)}</div>` : ''}
+          ${exampleTranslation && showExampleTranslation ? `<div class="example-translation">${escapeHtml(exampleTranslation)}${card.exViSource === CURRENT_MEANING_SOURCE ? '<span class="translation-label">Bản dịch máy · cần kiểm tra</span>' : ''}</div>` : ''}
           <div class="example-actions">
             <button class="example-speak-btn" id="exampleSpeakButton" type="button" aria-label="Đọc ví dụ"><i class="bi bi-volume-up-fill" aria-hidden="true"></i></button>
-            <button class="example-translate-btn" id="exampleTranslateButton" type="button" aria-expanded="${showExampleTranslation}" aria-label="${showExampleTranslation ? 'Ẩn bản dịch' : 'Dịch ví dụ'}"><i class="bi bi-translate" aria-hidden="true"></i><span>${showExampleTranslation ? 'Ẩn dịch' : 'Dịch'}</span></button>
+            <button class="example-translate-btn" id="exampleTranslateButton" type="button" aria-expanded="${exampleTranslationVisible}" aria-label="${exampleTranslationVisible ? 'Ẩn bản dịch' : 'Dịch ví dụ'}"><i class="bi bi-translate" aria-hidden="true"></i><span>${exampleTranslationVisible ? 'Ẩn dịch' : 'Dịch'}</span></button>
             <label class="example-rate" for="exampleRateSelect">
               <i class="bi bi-speedometer2" aria-hidden="true"></i>
               <span>Tốc độ</span>
               <select id="exampleRateSelect" aria-label="Tốc độ đọc ví dụ">
-                <option value="0.7" ${state.speechRate === 0.7 ? 'selected' : ''}>Chậm</option>
-                <option value="0.92" ${state.speechRate === 0.92 ? 'selected' : ''}>Vừa</option>
-                <option value="1.15" ${state.speechRate === 1.15 ? 'selected' : ''}>Nhanh</option>
+                <option value="0.6" ${state.speechRate === 0.6 ? 'selected' : ''}>Chậm 0.6×</option>
+                <option value="1" ${state.speechRate === 1 ? 'selected' : ''}>Vừa 1×</option>
+                <option value="1.4" ${state.speechRate === 1.4 ? 'selected' : ''}>Nhanh 1.4×</option>
               </select>
             </label>
           </div>
@@ -272,6 +380,7 @@
     if (exampleSpeakButton) {
       exampleSpeakButton.addEventListener('click', event => speakExample(card.ex, event));
     }
+
     const exampleTranslateButton = document.getElementById('exampleTranslateButton');
     if (exampleTranslateButton) {
       exampleTranslateButton.addEventListener('click', event => translateExample(card, event));
@@ -331,7 +440,10 @@
     }
 
     const current = sessionQueue[queueIndex];
-    if (!current.vi || !current.ipa) enrichCard(current);
+    if (!current.vi || !current.ipa || !current.ex || isLegacyMeaningSource(current.viSource) ||
+      (current.ex && !current.exVi) || isLegacyMeaningSource(current.exViSource)) {
+      enrichCard(current);
+    }
     main.innerHTML = `<div class="card" id="cardContent" role="button" tabindex="0" aria-label="${isRevealed ? 'Chạm để ẩn nghĩa' : 'Chạm để xem nghĩa'}"></div>`;
     const cardElement = document.getElementById('cardContent');
     cardElement.addEventListener('click', toggleCardAnswer);
@@ -407,7 +519,8 @@
         ${words.map((card, index) => `
           <div class="word-row">
             <div class="word-row-main"><strong>${escapeHtml(card.w)}</strong>
-              <span class="translation">${escapeHtml(card.vi || card.ipa || 'Chưa tra nghĩa')}</span>
+              <span class="translation">${escapeHtml(getMeaningForDisplay(card) || card.ipa || 'Chưa tra nghĩa')}</span>
+              ${card.viSource === CURRENT_MEANING_SOURCE ? '<span class="translation-label">Bản dịch máy · cần kiểm tra</span>' : ''}
             </div>
             <button type="button" data-word="${escapeHtml(card.w)}" aria-label="Ôn ${escapeHtml(card.w)}">Ôn từ</button>
           </div>
@@ -491,6 +604,86 @@
     showExampleTranslation = false;
     saveState();
     render();
+  }
+
+  function needsDraftTranslation(card) {
+    return !card.vi || !card.ex ||
+      isLegacyMeaningSource(card.viSource) ||
+      (Boolean(card.ex) && (!card.exVi || isLegacyMeaningSource(card.exViSource)));
+  }
+
+  function setBatchProgress(message) {
+    const progress = document.getElementById('batchProgress');
+    if (progress) progress.textContent = message;
+  }
+
+  async function translateAllDrafts() {
+    if (translationBatchRunning) return;
+    translationBatchRunning = true;
+    stopTranslationBatch = false;
+    const startButton = document.getElementById('translateAllButton');
+    const stopButton = document.getElementById('stopTranslationButton');
+    startButton.disabled = true;
+    stopButton.disabled = false;
+    setBatchProgress('Đang nạp Oxford 3000 và Oxford 5000...');
+
+    let completed = 0;
+    let processed = 0;
+    let stoppedByQuota = false;
+    let translationError = '';
+    try {
+      if (!await loadDataset('oxford-3000') || !await loadDataset('oxford-5000')) {
+        setBatchProgress('Không nạp đủ dữ liệu. Kiểm tra kết nối rồi thử lại.');
+        return;
+      }
+
+      const pendingCards = state.cards.filter(needsDraftTranslation);
+      for (const card of pendingCards) {
+        if (stopTranslationBatch) break;
+        setBatchProgress(`Đang tạo bản dịch nháp ${processed + 1}/${pendingCards.length}: ${card.w}`);
+        const result = await enrichCard(card, true, false);
+        processed += 1;
+        if (result.complete) completed += 1;
+        if (processed % 5 === 0 || result.quotaExceeded || stopTranslationBatch) saveState();
+        if (result.quotaExceeded) {
+          stoppedByQuota = true;
+          break;
+        }
+        if (result.translationFailed) {
+          translationError = result.translationError;
+          break;
+        }
+        if (!stopTranslationBatch) await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      saveState();
+
+      const remaining = state.cards.filter(needsDraftTranslation).length;
+      if (stoppedByQuota) {
+        setBatchProgress(`Đã lưu tiến độ. Dịch vụ đã hết hạn mức; còn ${remaining} từ cần xử lý. Chạy lại sau để tiếp tục.`);
+      } else if (translationError) {
+        setBatchProgress(`Google Dịch gặp lỗi: ${translationError}. Đã lưu tiến độ; còn ${remaining} từ.`);
+      } else if (stopTranslationBatch) {
+        setBatchProgress(`Đã dừng và lưu tiến độ. Hoàn tất ${completed}/${processed} từ trong lượt này; còn ${remaining} từ.`);
+      } else {
+        setBatchProgress(`Đã xử lý ${processed} từ; ${completed} từ có đủ dữ liệu, còn ${remaining} từ cần xử lý.`);
+      }
+    } catch (error) {
+      let saveError = null;
+      try {
+        saveState();
+      } catch (persistenceError) {
+        saveError = persistenceError;
+      }
+      const progressMessage = saveError
+        ? `Lỗi: ${error.message}. Không lưu được tiến độ: ${saveError.message}.`
+        : `Đã dừng do lỗi: ${error.message}. Tiến độ đã lưu; bấm lại để tiếp tục.`;
+      setBatchProgress(progressMessage);
+      setStatus(`Không hoàn tất được lượt dịch: ${progressMessage}`);
+    } finally {
+      translationBatchRunning = false;
+      startButton.disabled = false;
+      stopButton.disabled = true;
+    }
   }
 
   function parseAndAdd(rawText) {
@@ -584,6 +777,11 @@
     document.getElementById('bulkText').value = '';
   });
   document.getElementById('exportButton').addEventListener('click', exportBackup);
+  document.getElementById('translateAllButton').addEventListener('click', translateAllDrafts);
+  document.getElementById('stopTranslationButton').addEventListener('click', () => {
+    stopTranslationBatch = true;
+    setBatchProgress('Đang dừng sau từ hiện tại...');
+  });
   document.addEventListener('keydown', event => {
     if (document.getElementById('modal').classList.contains('open')) {
       if (event.key === 'Escape') closeModal();
