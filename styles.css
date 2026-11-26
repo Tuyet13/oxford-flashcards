@@ -97,6 +97,34 @@ h1 {
   font-size: 13px;
 }
 
+.voice-selector {
+  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.voice-selector select {
+  max-width: 82px;
+  padding: 2px 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.voice-selector option {
+  background: var(--panel);
+  color: var(--text);
+}
+
 .toolbar .primary,
 .row .primary {
   border-color: transparent;
@@ -551,6 +579,15 @@ textarea {
   .toolbar button {
     padding: 8px;
     font-size: 12px;
+  }
+
+  .voice-selector {
+    padding: 7px;
+    font-size: 11px;
+  }
+
+  .voice-selector select {
+    max-width: 74px;
   }
 
   .card {

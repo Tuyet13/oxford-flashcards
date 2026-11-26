@@ -18,6 +18,14 @@
       <div class="toolbar">
         <button type="button" onclick="loadDataset('oxford-3000')">+ Oxford 3000</button>
         <button type="button" onclick="loadDataset('oxford-5000')">+ Oxford 5000</button>
+        <label class="voice-selector" for="accentSelect">
+          <i class="bi bi-headphones" aria-hidden="true"></i>
+          <span>Giọng</span>
+          <select id="accentSelect" aria-label="Chọn giọng phát âm">
+            <option value="en-US">Anh-Mỹ</option>
+            <option value="en-GB">Anh-Anh</option>
+          </select>
+        </label>
         <button type="button" onclick="openModal()">Nạp / Sao lưu</button>
       </div>
     </header>

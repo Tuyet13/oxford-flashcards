@@ -2,6 +2,8 @@
   const DAILY_NEW_LIMIT = 15;
   const DEFAULT_SPEECH_RATE = 1;
   const SPEECH_RATES = [0.6, DEFAULT_SPEECH_RATE, 1.4];
+  const ACCENTS = ['en-US', 'en-GB'];
+  const DEFAULT_ACCENT = 'en-US';
   const CURRENT_MEANING_SOURCE = 'google-translate-en-vi-v1';
   const LEGACY_MEANING_SOURCE = 'mymemory-en-v0';
   const LEGACY_MEANING_SOURCES = new Set([LEGACY_MEANING_SOURCE, 'mymemory-en-US-v1']);
@@ -52,6 +54,7 @@
         parsed.speechRate = SPEECH_RATES.includes(Number(parsed.speechRate))
           ? Number(parsed.speechRate)
           : DEFAULT_SPEECH_RATE;
+        parsed.accent = ACCENTS.includes(parsed.accent) ? parsed.accent : DEFAULT_ACCENT;
         parsed.cards.forEach(card => {
           card.forgotten = Boolean(card.forgotten);
           if (!card.viSource && card.lookupAttempted && card.vi) {
@@ -70,7 +73,8 @@
       cards: [],
       date: todayStr(),
       newToday: 0,
-      speechRate: DEFAULT_SPEECH_RATE
+      speechRate: DEFAULT_SPEECH_RATE,
+      accent: DEFAULT_ACCENT
     };
   }
 
@@ -166,7 +170,9 @@
   function speak(word, event) {
     if (event) event.stopPropagation();
     const card = state.cards.find(item => item.w === word);
-    const audioUrl = card && (card.audioUS || card.audioUK);
+    const preferredAudio = state.accent === 'en-GB' ? card?.audioUK : card?.audioUS;
+    const fallbackAudio = state.accent === 'en-GB' ? card?.audioUS : card?.audioUK;
+    const audioUrl = preferredAudio || fallbackAudio;
     if (audioUrl) {
       const audio = new Audio(audioUrl);
       audio.play().catch(error => {
@@ -178,14 +184,14 @@
     speakWithBrowser(word);
   }
 
-  function speakWithBrowser(word, rate = DEFAULT_SPEECH_RATE) {
+  function speakWithBrowser(word, rate = DEFAULT_SPEECH_RATE, accent = state.accent) {
     if (!('speechSynthesis' in window)) {
       setStatus('Trình duyệt này không hỗ trợ đọc văn bản thành tiếng.');
       return;
     }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(word);
-    utterance.lang = 'en-US';
+    utterance.lang = accent;
     utterance.rate = rate;
     window.speechSynthesis.speak(utterance);
   }
@@ -777,6 +783,18 @@
     document.getElementById('bulkText').value = '';
   });
   document.getElementById('exportButton').addEventListener('click', exportBackup);
+  const accentSelect = document.getElementById('accentSelect');
+  accentSelect.value = state.accent;
+  accentSelect.addEventListener('change', event => {
+    const accent = event.currentTarget.value;
+    if (!ACCENTS.includes(accent)) {
+      setStatus('Giọng phát âm không hợp lệ.');
+      return;
+    }
+    state.accent = accent;
+    saveState();
+    setStatus(`Đã chọn giọng ${accent === 'en-GB' ? 'Anh-Anh' : 'Anh-Mỹ'}.`);
+  });
   document.getElementById('translateAllButton').addEventListener('click', translateAllDrafts);
   document.getElementById('stopTranslationButton').addEventListener('click', () => {
     stopTranslationBatch = true;
